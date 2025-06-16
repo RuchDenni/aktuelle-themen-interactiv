@@ -448,7 +448,7 @@
         
         <div class="save-controls">
             <button class="save-btn" onclick="saveProgress()">💾 Antworten speichern</button>
-            <button class="load-btn" onclick="loadProgress()">📂 Antworten laden</button>
+            <button class="load-btn" onclick="loadProgress(true)">📂 Antworten laden</button>
             <button class="export-btn" onclick="exportAnswers()">📄 Als PDF exportieren</button>
         </div>
         
@@ -894,6 +894,68 @@
     <div class="save-status" id="saveStatus"></div>
     
     <script>
+        // Storage helper functions that work without localStorage
+        const storage = {
+            // Try localStorage first, fall back to sessionStorage, then memory
+            data: {},
+            
+            setItem: function(key, value) {
+                try {
+                    if (typeof(Storage) !== "undefined" && localStorage) {
+                        localStorage.setItem(key, value);
+                        return true;
+                    }
+                } catch (e) {
+                    // localStorage not available
+                }
+                
+                try {
+                    if (typeof(Storage) !== "undefined" && sessionStorage) {
+                        sessionStorage.setItem(key, value);
+                        return true;
+                    }
+                } catch (e) {
+                    // sessionStorage not available
+                }
+                
+                // Fall back to memory storage
+                this.data[key] = value;
+                return true;
+            },
+            
+            getItem: function(key) {
+                try {
+                    if (typeof(Storage) !== "undefined" && localStorage) {
+                        return localStorage.getItem(key);
+                    }
+                } catch (e) {
+                    // localStorage not available
+                }
+                
+                try {
+                    if (typeof(Storage) !== "undefined" && sessionStorage) {
+                        return sessionStorage.getItem(key);
+                    }
+                } catch (e) {
+                    // sessionStorage not available
+                }
+                
+                // Fall back to memory storage
+                return this.data[key] || null;
+            },
+            
+            isAvailable: function() {
+                try {
+                    if (typeof(Storage) !== "undefined" && (localStorage || sessionStorage)) {
+                        return true;
+                    }
+                } catch (e) {
+                    // Storage not available
+                }
+                return false;
+            }
+        };
+        
         // Auto-save functionality
         let autoSaveInterval;
         
@@ -956,21 +1018,21 @@
                 answers.lesson2[input.id] = input.value;
             });
             
-            // Save to localStorage (in a real app, this would go to a server)
+            // Save using our storage helper
             const saveKey = `rzg_answers_${studentName}_${studentClass}`;
             try {
-                // Note: In a real deployment, you'd save to a server instead
-                // For now, we use localStorage as a demo
-                const existingData = JSON.parse(localStorage.getItem('rzg_all_answers') || '{}');
+                const existingData = JSON.parse(storage.getItem('rzg_all_answers') || '{}');
                 existingData[saveKey] = answers;
-                localStorage.setItem('rzg_all_answers', JSON.stringify(existingData));
+                storage.setItem('rzg_all_answers', JSON.stringify(existingData));
                 
                 if (showMessage) {
-                    showSaveStatus('Antworten gespeichert! 💾', 'success');
+                    const storageType = storage.isAvailable() ? 'Browser' : 'Sitzung';
+                    showSaveStatus(`Antworten in ${storageType} gespeichert! 💾`, 'success');
                 }
                 
                 return true;
             } catch (error) {
+                console.error('Save error:', error);
                 if (showMessage) {
                     showSaveStatus('Fehler beim Speichern! ❌', 'error');
                 }
@@ -983,41 +1045,58 @@
             const studentClass = document.getElementById('studentClass').value;
             
             if (!studentName) {
-                alert('Bitte gib zuerst deinen Namen ein!');
-                return;
+                // Don't show error if just loading automatically
+                return false;
             }
             
             const saveKey = `rzg_answers_${studentName}_${studentClass}`;
             
             try {
-                const allData = JSON.parse(localStorage.getItem('rzg_all_answers') || '{}');
+                const allData = JSON.parse(storage.getItem('rzg_all_answers') || '{}');
                 const answers = allData[saveKey];
                 
                 if (!answers) {
-                    showSaveStatus('Keine gespeicherten Antworten gefunden! 🔍', 'error');
-                    return;
+                    // Only show message if manually loading
+                    if (arguments.length > 0 && arguments[0] === true) {
+                        showSaveStatus('Keine gespeicherten Antworten gefunden! 🔍', 'error');
+                    }
+                    return false;
                 }
                 
                 // Load Lesson 1 answers
-                Object.keys(answers.lesson1).forEach(id => {
-                    const element = document.getElementById(id);
-                    if (element) {
-                        element.value = answers.lesson1[id];
-                    }
-                });
+                if (answers.lesson1) {
+                    Object.keys(answers.lesson1).forEach(id => {
+                        const element = document.getElementById(id);
+                        if (element && answers.lesson1[id]) {
+                            element.value = answers.lesson1[id];
+                        }
+                    });
+                }
                 
                 // Load Lesson 2 answers
-                Object.keys(answers.lesson2).forEach(id => {
-                    const element = document.getElementById(id);
-                    if (element) {
-                        element.value = answers.lesson2[id];
-                    }
-                });
+                if (answers.lesson2) {
+                    Object.keys(answers.lesson2).forEach(id => {
+                        const element = document.getElementById(id);
+                        if (element && answers.lesson2[id]) {
+                            element.value = answers.lesson2[id];
+                        }
+                    });
+                }
                 
-                showSaveStatus('Antworten geladen! 📂', 'success');
+                // Only show success message if manually loading
+                if (arguments.length > 0 && arguments[0] === true) {
+                    const storageType = storage.isAvailable() ? 'Browser' : 'Sitzung';
+                    showSaveStatus(`Antworten aus ${storageType} geladen! 📂`, 'success');
+                }
+                
+                return true;
                 
             } catch (error) {
-                showSaveStatus('Fehler beim Laden! ❌', 'error');
+                console.error('Error loading answers:', error);
+                if (arguments.length > 0 && arguments[0] === true) {
+                    showSaveStatus('Fehler beim Laden! ❌', 'error');
+                }
+                return false;
             }
         }
         
@@ -1117,20 +1196,55 @@
             updateProgressBar(1);
             startAutoSave();
             
-            // Load student info from localStorage if available
-            const savedName = localStorage.getItem('rzg_student_name');
-            const savedClass = localStorage.getItem('rzg_student_class');
+            // Load student info from storage if available
+            const savedName = storage.getItem('rzg_student_name');
+            const savedClass = storage.getItem('rzg_student_class');
             
             if (savedName) document.getElementById('studentName').value = savedName;
             if (savedClass) document.getElementById('studentClass').value = savedClass;
             
+            // AUTO-LOAD existing answers when page loads
+            if (savedName) {
+                setTimeout(() => {
+                    loadProgress();
+                }, 500); // Small delay to ensure all elements are loaded
+            }
+            
+            // Show storage status
+            if (!storage.isAvailable()) {
+                showSaveStatus('⚠️ Antworten werden nur für diese Sitzung gespeichert', 'error');
+            }
+            
             // Save student info when changed
             document.getElementById('studentName').addEventListener('change', function() {
-                localStorage.setItem('rzg_student_name', this.value);
+                storage.setItem('rzg_student_name', this.value);
+                // Auto-load answers when name changes
+                if (this.value) {
+                    setTimeout(() => loadProgress(), 200);
+                }
             });
             
             document.getElementById('studentClass').addEventListener('change', function() {
-                localStorage.setItem('rzg_student_class', this.value);
+                storage.setItem('rzg_student_class', this.value);
+                // Auto-load answers when class changes
+                const name = document.getElementById('studentName').value;
+                if (name) {
+                    setTimeout(() => loadProgress(), 200);
+                }
+            });
+            
+            // Auto-save when typing (debounced)
+            let saveTimeout;
+            const allInputs = document.querySelectorAll('textarea, input[type="text"]');
+            allInputs.forEach(input => {
+                if (!input.id.includes('student')) { // Don't auto-save for name/class fields
+                    input.addEventListener('input', function() {
+                        clearTimeout(saveTimeout);
+                        saveTimeout = setTimeout(() => {
+                            saveProgress(false); // Silent save while typing
+                        }, 2000); // Save 2 seconds after user stops typing
+                    });
+                }
             });
         });
         
